@@ -2,7 +2,7 @@
 /**
     Variable declarations
 */
-    var isNode = false, hasServiceWorker = false, isServiceWorkerInstalled = false;
+    var isNode = false, hasServiceWorker = false, isServiceWorkerInstalled = false, options = {};
 
 /**
     Check to see if rum is running on a server or a client. All checks should be here.
@@ -40,7 +40,7 @@
     }
 
 /* Performance API functions [W3C standard]*/
-    var allTypes = {'entryTypes': ['mark', 'longtask', 'frame', 'navigation', 'resource']},
+    var allTypes = {'entryTypes': ['mark', 'longtask', 'frame', 'navigation', 'resource', 'paint']},
         perfQueue = []
 
     function getObserver(callback){
@@ -60,30 +60,41 @@
             entryTypes = allTypes
         }
         for (var idx in entryTypes['entryTypes']){
-            var perfEntries = performance.getEntriesByType(entryTypes['entryTypes'][idx])    
-	    pushToQueue(perfEntries)
-        }
-    }
-    
-    function pushToQueue(list){
-        for (var i = 0; i < list.length; i++){
-            perfQueue.push(list[i])
+            var perfEntries = performance.getEntriesByType(entryTypes['entryTypes'][idx])   
+	    pushListToQueue(perfEntries)
         }
     }
 
-    function send(){
+    /* Push performance entries into queue */    
+    function pushListToQueue(list){
+        for (var i = 0; i < list.length; i++){
+            var perfData = {};
+            options['performance.entry.keys'].forEach(function(attrib){
+                if (list[i][attrib] !== undefined){
+                    perfData[attrib] = list[i][attrib]
+                }
+            });
+            perfQueue.push({performance:perfData})
+        }
+    }
+
+    function simplePush(data){
+        perfQueue.push(data)
+    }
+
+    function transmit(){
         console.log(perfQueue.shift())
     }
 
     var observerCallback = function(list){
         var perfEntries = list.getEntries();
-	pushToQueue(perfEntries)
+	pushListToQueue(perfEntries)
     }
 /**
     Program logic is encapsulated in exportDef which is exposed as a function
 */
     exportDef = function() {
-        var hello, options;
+        var hello, timer;
         hello = function() {
             console.log('Hello, World!');
         }
@@ -91,15 +102,52 @@
         /*
         Configurations for Rum accepted as a dictionary.
         */
-        config = function(options) {
-            options = Object.assign({},options)
+        config = function(opt) {
+
+            opt = opt || {}
+
+            var defaults = {
+                'performance.entry.keys': ['name', 'entryType', 'startTime', 'duration', 
+                                           'initiatorType', 'workerStart', 'containerType', 
+                                           'containerName', 'containerId', 'containerSrc'],
+                'transmit.interval': 1000,
+                'transmit.url': 'https://google.com',
+                'navigator.keys': []
+            }
+
+            options = Object.assign(defaults,opt)
+
+            stop();
+
+            start(options);
         }
         
         print = function(){
-            var observer = getObserver(observerCallback)
-            observe(observer, {})
+            try {
+                var observer = getObserver(observerCallback);
+                observe(observer, {});
+            } catch (e) {
+                console.log(e);
+            }
         }
         
+        start = function(){
+
+            timer = setInterval(transmit, options['transmit.interval'] || 1000)
+        }
+
+        stop = function(){
+            clearInterval(timer)
+        }
+
+        send = function(data){
+            try {
+                simplePush(data);
+            } catch (e) {
+                console.log(e);
+            }
+        }
+
         /*
         Export functions for call
         */
@@ -107,8 +155,15 @@
             hello: hello,
             config: config,
             print: print,
-            snapshot: snapshot
+            snapshot: snapshot,
+            start: start,
+            stop: stop,
+            send: send
         };
+
+/* Call start to transmit data per the defined interval with default settings */
+        config();
+
         return exports
     }
 /** 
@@ -121,5 +176,5 @@
     } else {
       window.Rum = exportDef();
     }
-}).call(this)
 
+}).call(this)
