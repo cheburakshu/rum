@@ -12,6 +12,7 @@
     hasBeacon = typeof navigator !== "undefined" && 'sendBeacon' in navigator
     hasFetch = typeof self !== "undefined" && self.fetch !== undefined;
     hasDocument = typeof self !== "undefined" && self.document !== undefined;
+    hasWindow = typeof self !== "undefined" && self.window !== undefined;
 
 
 /*
@@ -72,7 +73,7 @@
         for (var i = 0; i < list.length; i++){
             var perfData = {};
 
-	    perfData['rumTime'] = new Date(performance.timeOrigin + performance.now())
+	    perfData['rumTime'] = new Date(performance.timeOrigin + performance.now()).toISOString()
 
             options['performance.entry.keys'].forEach(function(attrib){
                 if (list[i][attrib] !== undefined){
@@ -143,7 +144,7 @@
         try {
             if ((event.target.tagName !== undefined && options['track.elements'].indexOf(event.target.tagName.toLowerCase()) > -1) || options['track.elements'].indexOf('all') > -1) {
                 var eventData = {
-                    timestamp: new Date(performance.timeOrigin + performance.now()),
+                    timestamp: new Date(performance.timeOrigin + performance.now()).toISOString(),
                     id: event.target.id,
                     tagName: event.target.tagName,
                     name: event.target.name,
@@ -235,8 +236,11 @@
         
         start = function(){
             if (hasDocument) {
-                console.log('adding ev cp');
                 document.addEventListener('click', eventCapture);
+            }
+            if (hasWindow) {
+                window.addEventListener('beforeunload', transmit);
+                window.addEventListener('unload', transmit);
             }
             timer = setInterval(transmit, options['transmit.interval'] || 1000)
         }
@@ -245,12 +249,17 @@
             if (hasDocument) {
                 document.removeEventListener('click', eventCapture);
             }
+            if (hasWindow) {
+                window.removeEventListener('beforeunload', transmit);
+                window.removeEventListener('unload', transmit);
+            }
             clearInterval(timer)
         }
 
         send = function(data){
             try {
-	        var timestamp = new Date(performance.timeOrigin + performance.now())
+	        var timestamp = new Date(performance.timeOrigin + performance.now()).toISOString()
+		console.log(timestamp, performance.timeOrigin, performance.now());
                 simplePush({metric: Object.assign(data,{timestamp: timestamp})});
             } catch (e) {
                 console.log(e);
