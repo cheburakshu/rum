@@ -1,9 +1,10 @@
 {
-  "name": "rum",
-  "version": "0.0.0",
+  "name": "rumjs",
+  "version": "1.0.0",
+  "main": "rum.js",
   "description": "Node Fetch for RUM",
   "dependencies": {
     "node-fetch": "^2.1.2"
   },
-  "author": "Sudharsan Rajagopalan"
+  "author": "Sudharsan Rajagopalan <cheburakshu@gmail.com>"
 }
