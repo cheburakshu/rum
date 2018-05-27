@@ -11,6 +11,7 @@
     hasServiceWorker = typeof navigator !== "undefined" && 'serviceWorker' in navigator
     hasBeacon = typeof navigator !== "undefined" && 'sendBeacon' in navigator
     hasFetch = typeof self !== "undefined" && self.fetch !== undefined;
+    hasDocument = typeof self !== "undefined" && self.document !== undefined;
 
 
 /*
@@ -19,6 +20,7 @@
     var performance, performanceObserver
     if (isNode) {
         var {performance, PerformanceObserver} = require('perf_hooks');
+	var fetch = require('node-fetch');
     } else {
         var PerformanceObserver = self.PerformanceObserver 
 	var performance = self.performance
@@ -41,7 +43,7 @@
 
 /* Performance API functions [W3C standard]*/
     var allTypes = {'entryTypes': ['mark', 'longtask', 'frame', 'navigation', 'resource', 'paint']},
-        perfQueue = []
+        perfQueue = [], transmitQueue = [], userQueue = []
 
     function getObserver(callback){
         var observer = new PerformanceObserver(callback)
@@ -69,26 +71,118 @@
     function pushListToQueue(list){
         for (var i = 0; i < list.length; i++){
             var perfData = {};
+
+	    perfData['rumTime'] = new Date(performance.timeOrigin + performance.now())
+
             options['performance.entry.keys'].forEach(function(attrib){
                 if (list[i][attrib] !== undefined){
                     perfData[attrib] = list[i][attrib]
                 }
             });
             perfQueue.push({performance:perfData})
+	    checkWaterMark();
         }
     }
 
+    function checkWaterMark(){
+	if ((userQueue.length + perfQueue.length) >= options['transmit.minRecords']) {
+	    transmit();
+	}
+    }
+
     function simplePush(data){
-        perfQueue.push(data)
+        userQueue.push(data);
+	checkWaterMark();
+    }
+
+    function enrich(){
+         var navData = {}, docData = {}
+	 options['navigator.keys'].forEach(function(key){
+             if (navigator[key] !== undefined){
+	          navData[key] = navigator[key]
+	     }
+	 });
+
+	 options['document.keys'].forEach(function(key){
+             if (document[key] !== undefined){
+	          docData[key] = document[key]
+	     }
+	 });
+
+         return {navigator: navData,
+	         document: docData}
     }
 
     function transmit(){
-        console.log(perfQueue.shift())
+	var enrichData = {}
+	if (!isNode) {
+	    enrichData = enrich()
+	}
+	while (perfQueue.length) {
+            var perfData = perfQueue.shift()
+	    transmitQueue.push(Object.assign(enrichData, perfData))
+	}
+	while (userQueue.length) {
+            var userData = userQueue.shift()
+	    transmitQueue.push(Object.assign(enrichData, userData))
+	}
+	if (transmitQueue.length) {
+	    telemetry(JSON.stringify(transmitQueue.splice(0)));
+	}
     }
 
     var observerCallback = function(list){
         var perfEntries = list.getEntries();
 	pushListToQueue(perfEntries)
+    }
+
+/*
+    Event logging. Generic event capture/callback. Additional events can use the same interface. If needed, new data eleements can be added here.
+*/
+    function eventCapture(event){
+        try {
+            if ((event.target.tagName !== undefined && options['track.elements'].indexOf(event.target.tagName.toLowerCase()) > -1) || options['track.elements'].indexOf('all') > -1) {
+                var eventData = {
+                    timestamp: new Date(performance.timeOrigin + performance.now()),
+                    id: event.target.id,
+                    tagName: event.target.tagName,
+                    name: event.target.name,
+                    value: event.target.value,
+                    innerHTML: event.target.innerHTML.substring(0,10),
+                    href: event.target.href,
+                    src: event.target.src,
+                    baseURI: event.target.baseURI
+                };
+                simplePush({event: Object.assign({}, eventData)});
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+/*
+    Telemetry using Fetch / XHR
+*/
+    function telemetry(data){
+	var body = null, opts = null, url = null, queued = false;
+	body = {body: data}
+	opts = Object.assign(options['transmit.http.options'], body);
+	url = options['transmit.url'];
+	try {
+	    if (hasBeacon){
+	        queued = navigator.sendBeacon(url, data);
+	    }
+	    if (!queued) {
+                if (hasFetch || isNode) {
+                    fetch(url, opts);
+	        } else {
+    
+	        }
+	    }
+	} catch (e) {
+            console.error(e)
+	}
+
     }
 /**
     Program logic is encapsulated in exportDef which is exposed as a function
@@ -110,9 +204,17 @@
                 'performance.entry.keys': ['name', 'entryType', 'startTime', 'duration', 
                                            'initiatorType', 'workerStart', 'containerType', 
                                            'containerName', 'containerId', 'containerSrc'],
-                'transmit.interval': 1000,
-                'transmit.url': 'https://google.com',
-                'navigator.keys': []
+                'track.elements': ['all'],
+                'transmit.interval': 5000,
+                'transmit.minRecords': 100,
+                'transmit.url': 'http://104.41.128.30:8000/sensor/hi',
+                'transmit.http.options': {
+		    'keepalive': true,
+		    'method': 'POST',
+		    'mode': 'no-cors',
+		},
+                'navigator.keys': ['userAgent'],
+		'document.keys': ['referrer']
             }
 
             options = Object.assign(defaults,opt)
@@ -132,17 +234,24 @@
         }
         
         start = function(){
-
+            if (hasDocument) {
+                console.log('adding ev cp');
+                document.addEventListener('click', eventCapture);
+            }
             timer = setInterval(transmit, options['transmit.interval'] || 1000)
         }
 
         stop = function(){
+            if (hasDocument) {
+                document.removeEventListener('click', eventCapture);
+            }
             clearInterval(timer)
         }
 
         send = function(data){
             try {
-                simplePush(data);
+	        var timestamp = new Date(performance.timeOrigin + performance.now())
+                simplePush({metric: Object.assign(data,{timestamp: timestamp})});
             } catch (e) {
                 console.log(e);
             }
