@@ -144,7 +144,7 @@
         try {
             if ((event.target.tagName !== undefined && options['track.elements'].indexOf(event.target.tagName.toLowerCase()) > -1) || options['track.elements'].indexOf('all') > -1) {
                 var eventData = {
-                    timestamp: new Date(performance.timeOrigin + performance.now()).toISOString(),
+                    timestamp: new Date().toISOString(),
                     id: event.target.id,
                     tagName: event.target.tagName,
                     name: event.target.name,
@@ -258,8 +258,7 @@
 
         send = function(data){
             try {
-	        var timestamp = new Date(performance.timeOrigin + performance.now()).toISOString()
-		console.log(timestamp, performance.timeOrigin, performance.now());
+	        var timestamp = new Date().toISOString()
                 simplePush({metric: Object.assign(data,{timestamp: timestamp})});
             } catch (e) {
                 console.log(e);
