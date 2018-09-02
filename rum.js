@@ -21,10 +21,10 @@
     var performance, performanceObserver
     if (isNode) {
         var {performance, PerformanceObserver} = require('perf_hooks');
-	var fetch = require('node-fetch');
+    var fetch = require('node-fetch');
     } else {
         var PerformanceObserver = self.PerformanceObserver 
-	var performance = self.performance
+        var performance = self.performance
     }
         
 /**
@@ -58,13 +58,18 @@
         observer.observe(entryTypes)
     }
     
+    var observerCallback = function(list){
+        var perfEntries = list.getEntries();
+        pushListToQueue(perfEntries)
+    }
+
     function snapshot(entryTypes){
         if (entryTypes === undefined || !entryTypes.hasOwnProperty('entryTypes') || !entryTypes['entryTypes'] instanceof Array){
             entryTypes = allTypes
         }
         for (var idx in entryTypes['entryTypes']){
             var perfEntries = performance.getEntriesByType(entryTypes['entryTypes'][idx])   
-	    pushListToQueue(perfEntries)
+            pushListToQueue(perfEntries)
         }
     }
 
@@ -73,7 +78,7 @@
         for (var i = 0; i < list.length; i++){
             var perfData = {};
 
-	    perfData['rumTime'] = new Date(performance.timeOrigin + performance.now()).toISOString()
+            perfData['rumTime'] = new Date(performance.timeOrigin + performance.now()).toISOString()
 
             options['performance.entry.keys'].forEach(function(attrib){
                 if (list[i][attrib] !== undefined){
@@ -81,60 +86,45 @@
                 }
             });
             perfQueue.push({performance:perfData})
-	    checkWaterMark();
+            checkWaterMark();
         }
     }
 
     function checkWaterMark(){
-	if ((userQueue.length + perfQueue.length) >= options['transmit.minRecords']) {
-	    transmit();
-	}
+    if ((userQueue.length + perfQueue.length) >= options['transmit.minRecords']) {
+        transmit();
+    }
     }
 
     function simplePush(data){
-        userQueue.push(data);
-	checkWaterMark();
-    }
+        var navData = {}, docData = {}
+        if (!isNode) {
+            options['navigator.keys'].forEach(function(key){
+                if (navigator[key] !== undefined){
+                    navData[key] = navigator[key]
+                }
+             });
 
-    function enrich(){
-         var navData = {}, docData = {}
-	 options['navigator.keys'].forEach(function(key){
-             if (navigator[key] !== undefined){
-	          navData[key] = navigator[key]
-	     }
-	 });
-
-	 options['document.keys'].forEach(function(key){
-             if (document[key] !== undefined){
-	          docData[key] = document[key]
-	     }
-	 });
-
-         return {navigator: navData,
-	         document: docData}
+             options['document.keys'].forEach(function(key){
+                 if (document[key] !== undefined){
+                     docData[key] = document[key]
+                 }
+             });
+        }
+        userQueue.push({...data, ...navData, ...docData});
+        checkWaterMark();
     }
 
     function transmit(){
-	var enrichData = {}
-	if (!isNode) {
-	    enrichData = enrich()
-	}
-	while (perfQueue.length) {
-            var perfData = perfQueue.shift()
-	    transmitQueue.push(Object.assign(enrichData, perfData))
-	}
-	while (userQueue.length) {
-            var userData = userQueue.shift()
-	    transmitQueue.push(Object.assign(enrichData, userData))
-	}
-	if (transmitQueue.length) {
-	    telemetry(JSON.stringify(transmitQueue.splice(0)));
-	}
-    }
-
-    var observerCallback = function(list){
-        var perfEntries = list.getEntries();
-	pushListToQueue(perfEntries)
+        while (perfQueue.length) {
+            transmitQueue.push(perfQueue.shift())
+        }
+        while (userQueue.length) {
+            transmitQueue.push(userQueue.shift())
+        }
+        if (transmitQueue.length) {
+            telemetry(JSON.stringify(transmitQueue.splice(0)));
+        }
     }
 
 /*
@@ -165,24 +155,30 @@
     Telemetry using Fetch / XHR
 */
     function telemetry(data){
-	var body = null, opts = null, url = null, queued = false;
-	body = {body: data}
-	opts = Object.assign(options['transmit.http.options'], body);
-	url = options['transmit.url'];
-	try {
-	    if (hasBeacon){
-	        queued = navigator.sendBeacon(url, data);
-	    }
-	    if (!queued) {
+        var body = null, opts = null, url = null, queued = false;
+        body = {body: data}
+        opts = Object.assign(options['transmit.http.options'], body);
+        url = options['transmit.url'];
+        try {
+            // First Priority: Beacon
+            if (hasBeacon){
+                queued = navigator.sendBeacon(url, data);
+            }
+            // Second Priority: Fetch
+            if (!queued) {
                 if (hasFetch || isNode) {
                     fetch(url, opts);
-	        } else {
-    
-	        }
-	    }
-	} catch (e) {
+                } else {
+                    // Third Priority: XMLHttpRequest
+                    // TODO: Should be a singleton.
+                    var client = new XMLHttpRequest();
+                    client.open("POST", url, true);
+                    client.send(data)
+                }
+            }
+        } catch (e) {
             console.error(e)
-	}
+        }
 
     }
 /**
@@ -210,19 +206,20 @@
                 'transmit.minRecords': 100,
                 'transmit.url': 'http://104.41.128.30:8000/sensor/hi',
                 'transmit.http.options': {
-		    'keepalive': true,
-		    'method': 'POST',
-		    'mode': 'no-cors',
-		},
+                    'keepalive': true,
+                    'method': 'POST',
+                    'mode': 'no-cors',
+                },
                 'navigator.keys': ['userAgent'],
-		'document.keys': ['referrer']
+                'document.keys': ['referrer']
             }
 
-            options = Object.assign(defaults,opt)
+            /* This is a global variable. Once set here, it is available everywhere */
+            options = Object.assign(defaults, opt)
 
             stop();
 
-            start(options);
+            start();
         }
         
         print = function(){
@@ -258,7 +255,7 @@
 
         send = function(data){
             try {
-	        var timestamp = new Date().toISOString()
+                var timestamp = new Date().toISOString()
                 simplePush({metric: Object.assign(data,{timestamp: timestamp})});
             } catch (e) {
                 console.log(e);
@@ -280,6 +277,7 @@
 
 /* Call start to transmit data per the defined interval with default settings */
         config();
+        print();
 
         return exports
     }
